@@ -1,0 +1,510 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#14110f">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<title>Clavinova Remote – CLP-825</title>
+<style>
+  :root{
+    --bg:#14110f; --panel:#1f1a17; --panel2:#2a2420; --line:#3a322c;
+    --text:#f3ece4; --muted:#a89a8c; --accent:#d9a441; --accent2:#7fb38a; --danger:#d0614f;
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:var(--bg);color:var(--text);
+    font:15px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+  header{position:sticky;top:0;z-index:5;background:linear-gradient(var(--bg),rgba(20,17,15,.92));
+    padding:12px 14px 10px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:10px}
+  header h1{font-size:17px;margin:0;font-weight:650;letter-spacing:.2px;flex:1}
+  header h1 small{display:block;font-size:11px;color:var(--muted);font-weight:400}
+  .dot{width:10px;height:10px;border-radius:50%;background:var(--danger);box-shadow:0 0 8px var(--danger)}
+  .dot.on{background:var(--accent2);box-shadow:0 0 8px var(--accent2)}
+  main{padding:12px 12px 40px;max-width:720px;margin:0 auto}
+  section{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:12px}
+  h2{font-size:12px;text-transform:uppercase;letter-spacing:1.2px;color:var(--muted);margin:0 0 10px;font-weight:600}
+  button{font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);
+    border-radius:10px;padding:10px 12px;min-height:44px;cursor:pointer}
+  button:active{transform:scale(.97)}
+  button.primary{background:var(--accent);color:#1b1408;border-color:var(--accent);font-weight:650}
+  button.sel{background:var(--accent);color:#1b1408;border-color:var(--accent);font-weight:600}
+  button.on{background:var(--accent2);color:#0f1a12;border-color:var(--accent2);font-weight:600}
+  button.danger{border-color:var(--danger);color:var(--danger)}
+  .row{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .grid{display:grid;grid-template-columns:repeat(2,1fr);gap:8px}
+  @media(min-width:520px){.grid{grid-template-columns:repeat(3,1fr)}}
+  select{font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);
+    border-radius:10px;padding:10px;min-height:44px;width:100%}
+  label.slider{display:grid;grid-template-columns:110px 1fr 42px;align-items:center;gap:8px;margin:6px 0}
+  label.slider span:last-child{text-align:right;color:var(--muted);font-variant-numeric:tabular-nums}
+  input[type=range]{width:100%;accent-color:var(--accent);height:30px}
+  .muted{color:var(--muted);font-size:13px}
+  .msg{padding:10px;border-radius:10px;background:#3a1f1a;border:1px solid var(--danger);font-size:14px;margin-bottom:12px;display:none}
+  .msg.show{display:block}
+  .msg.ok{background:#1a2e20;border-color:var(--accent2)}
+  .stepper{display:flex;align-items:center;gap:8px}
+  .stepper b{min-width:56px;text-align:center;font-variant-numeric:tabular-nums}
+  .stepper button{width:48px}
+  /* Keyboard */
+  .kbwrap{position:relative;height:150px;user-select:none;-webkit-user-select:none;touch-action:none;margin-top:8px}
+  .key{position:absolute;top:0;border:1px solid #222;border-radius:0 0 6px 6px}
+  .key.w{background:#f4efe6;height:150px;z-index:1}
+  .key.b{background:#1a1614;height:92px;z-index:2;border-color:#000}
+  .key.down.w{background:var(--accent)}
+  .key.down.b{background:#9a6f1f}
+  .key .lbl{position:absolute;bottom:4px;width:100%;text-align:center;font-size:10px;color:#776a5c}
+  details summary{cursor:pointer;color:var(--muted);font-size:13px;margin-top:6px}
+  .hide{display:none!important}
+  .rec{color:var(--danger)}
+</style>
+</head>
+<body>
+<header>
+  <div class="dot" id="dot"></div>
+  <h1>Clavinova Remote<small id="status">Nicht verbunden</small></h1>
+  <button class="danger" id="panic" title="Alle Töne aus">■ Stopp</button>
+</header>
+
+<main>
+  <div class="msg" id="msg"></div>
+
+  <!-- Verbindung -->
+  <section>
+    <h2>Verbindung</h2>
+    <button class="primary" id="connect" style="width:100%">Mit Klavier verbinden</button>
+    <div id="ports" class="hide" style="margin-top:10px">
+      <div class="muted">Ausgang (zum Klavier)</div>
+      <select id="outSel"></select>
+      <div class="muted" style="margin-top:8px">Eingang (vom Klavier)</div>
+      <select id="inSel"></select>
+    </div>
+  </section>
+
+  <!-- Klänge -->
+  <section>
+    <h2>Klang</h2>
+    <div class="grid" id="voices"></div>
+  </section>
+
+  <!-- Layer / Split -->
+  <section>
+    <h2>Layer &amp; Split</h2>
+    <div class="row">
+      <button id="layerBtn" style="flex:1">Layer: aus</button>
+      <button id="splitBtn" style="flex:1">Split: aus</button>
+    </div>
+    <div id="layerBox" class="hide" style="margin-top:10px">
+      <div class="muted">Zweiter Klang (übereinander)</div>
+      <select id="layerVoice"></select>
+      <label class="slider"><span>Layer-Lautst.</span><input type="range" id="layerVol" min="0" max="127" value="90"><span id="layerVolV">90</span></label>
+    </div>
+    <div id="splitBox" class="hide" style="margin-top:10px">
+      <div class="muted">Klang für die linke Hand</div>
+      <select id="leftVoice"></select>
+      <label class="slider"><span>Split-Punkt</span><input type="range" id="splitPt" min="36" max="72" value="54"><span id="splitPtV">F#3</span></label>
+      <label class="slider"><span>Links-Lautst.</span><input type="range" id="leftVol" min="0" max="127" value="100"><span id="leftVolV">100</span></label>
+    </div>
+    <p class="muted" style="margin:8px 0 0">Layer und Split gelten für die Handy-Tastatur und, wenn „Klavier über App“ aktiv ist, auch für die echten Tasten.</p>
+  </section>
+
+  <!-- Klavier über App -->
+  <section>
+    <h2>Klavier über App spielen</h2>
+    <button id="echoBtn" style="width:100%">Aus – Klavier spielt normal</button>
+    <p class="muted" style="margin:8px 0 0">Schaltet am Klavier „Local Control“ aus und leitet deine Tasten über die App zurück. So greifen Klangwahl, Layer, Split und Transponieren der App auch auf die echten Tasten. Braucht einen MIDI-Eingang (Kabel empfohlen, Bluetooth hat etwas Verzögerung).</p>
+  </section>
+
+  <!-- Mixer -->
+  <section>
+    <h2>Mixer</h2>
+    <label class="slider"><span>Lautstärke</span><input type="range" id="vol" min="0" max="127" value="100"><span id="volV">100</span></label>
+    <label class="slider"><span>Hall</span><input type="range" id="rev" min="0" max="127" value="40"><span id="revV">40</span></label>
+    <label class="slider"><span>Chorus</span><input type="range" id="cho" min="0" max="127" value="0"><span id="choV">0</span></label>
+    <label class="slider"><span>Helligkeit</span><input type="range" id="bri" min="0" max="127" value="64"><span id="briV">64</span></label>
+    <label class="slider"><span>Panorama</span><input type="range" id="pan" min="0" max="127" value="64"><span id="panV">C</span></label>
+  </section>
+
+  <!-- Transpose / Tuning -->
+  <section>
+    <h2>Stimmung</h2>
+    <div class="row" style="justify-content:space-between">
+      <span>Transponieren</span>
+      <div class="stepper"><button id="trDown">−</button><b id="trV">0</b><button id="trUp">+</button></div>
+    </div>
+    <div class="row" style="justify-content:space-between;margin-top:8px">
+      <span>Feinstimmung (Hz für A4)</span>
+      <div class="stepper"><button id="tuDown">−</button><b id="tuV">440.0</b><button id="tuUp">+</button></div>
+    </div>
+    <p class="muted" style="margin:8px 0 0">Transponieren wirkt auf Handy-Tastatur und „Klavier über App“. Feinstimmung wird per MIDI (RPN) gesendet.</p>
+  </section>
+
+  <!-- Pedale -->
+  <section>
+    <h2>Pedale</h2>
+    <div class="row">
+      <button id="sus" style="flex:1">Sustain</button>
+      <button id="sos" style="flex:1">Sostenuto</button>
+      <button id="soft" style="flex:1">Soft</button>
+    </div>
+  </section>
+
+  <!-- Tastatur -->
+  <section>
+    <h2>Tastatur</h2>
+    <div class="row" style="justify-content:space-between">
+      <div class="stepper"><button id="octDown">◀</button><b id="octV">C3–C5</b><button id="octUp">▶</button></div>
+      <label class="slider" style="grid-template-columns:70px 1fr 34px;flex:1;min-width:180px;margin:0"><span>Anschlag</span><input type="range" id="vel" min="1" max="127" value="90"><span id="velV">90</span></label>
+    </div>
+    <div class="kbwrap" id="kb"></div>
+  </section>
+
+  <!-- Aufnahme -->
+  <section>
+    <h2>Aufnahme</h2>
+    <div class="row">
+      <button id="recBtn" style="flex:1">● Aufnehmen</button>
+      <button id="playBtn" style="flex:1">▶ Abspielen</button>
+    </div>
+    <p class="muted" id="recInfo" style="margin:8px 0 0">Nimmt auf, was du am Klavier spielst, und spielt es übers Klavier wieder ab (benötigt MIDI-Eingang).</p>
+  </section>
+
+  <!-- Metronom -->
+  <section>
+    <h2>Metronom (Handy-Lautsprecher)</h2>
+    <div class="row" style="justify-content:space-between">
+      <div class="stepper"><button id="bpmDown">−</button><b id="bpmV">90</b><button id="bpmUp">+</button></div>
+      <select id="beats" style="width:auto;flex:0 0 auto">
+        <option value="2">2/4</option><option value="3">3/4</option><option value="4" selected>4/4</option><option value="6">6/8</option><option value="0">ohne Betonung</option>
+      </select>
+      <button id="metBtn">Start</button>
+    </div>
+  </section>
+
+  <details>
+    <summary>Hilfe &amp; Fehlersuche</summary>
+    <ul class="muted">
+      <li>Diese Seite braucht einen Browser mit Web MIDI: Chrome auf Android. Auf dem iPhone geht das nur mit einer Browser-App, die Web MIDI kann.</li>
+      <li>Am Klavier müssen Program Change und Control Change auf „On“ stehen (Werkseinstellung).</li>
+      <li>Empfangskanal am Klavier: „ALL“ (Werkseinstellung). Die App nutzt Kanal 1 (Hauptklang), 2 (Layer) und 3 (linke Hand).</li>
+      <li>Kein Ton? Auf „■ Stopp“ tippen, dann den Klang erneut wählen. Hängt die Tastatur stumm, den Modus „Klavier über App“ ausschalten – dann wird Local Control wieder eingeschaltet.</li>
+    </ul>
+  </details>
+</main>
+
+<script>
+(() => {
+  // ---------- Daten aus der CLP-825 MIDI-Referenz ----------
+  const VOICES = [
+    {n:"CFX Grand",     msb:108, lsb:0, pc:1},
+    {n:"Bösendorfer",   msb:108, lsb:6, pc:1},
+    {n:"Pop Grand",     msb:108, lsb:1, pc:2},
+    {n:"Stage E.Piano", msb:108, lsb:0, pc:5},
+    {n:"DX E.Piano",    msb:108, lsb:0, pc:6},
+    {n:"Harpsichord",   msb:108, lsb:0, pc:7},
+    {n:"Vibraphone",    msb:108, lsb:0, pc:12},
+    {n:"Pipe Organ",    msb:108, lsb:1, pc:20},
+    {n:"Jazz Organ",    msb:108, lsb:0, pc:17},
+    {n:"Strings",       msb:108, lsb:0, pc:49},
+  ];
+  const CH_MAIN = 0, CH_LAYER = 1, CH_LEFT = 2; // MIDI-Kanäle 1,2,3
+  const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
+  const noteName = n => NOTE_NAMES[n%12] + (Math.floor(n/12)-1);
+
+  // ---------- Zustand ----------
+  const S = {
+    voice:0, layer:false, layerVoice:9, layerVol:90,
+    split:false, leftVoice:9, splitPt:54, leftVol:100,
+    vol:100, rev:40, cho:0, bri:64, pan:64,
+    transpose:0, tuneHz:440.0, oct:4, vel:90, bpm:90, beats:4,
+  };
+  try { Object.assign(S, JSON.parse(localStorage.getItem("clp825") || "{}")); } catch(e){}
+  const save = () => { try { localStorage.setItem("clp825", JSON.stringify(S)); } catch(e){} };
+
+  let midi = null, out = null, inp = null, echo = false;
+  const $ = id => document.getElementById(id);
+
+  function showMsg(t, ok){ const m=$("msg"); m.textContent=t; m.className="msg show"+(ok?" ok":""); if(ok) setTimeout(()=>m.className="msg",2500); }
+
+  // ---------- MIDI senden ----------
+  function send(bytes){ if(out){ try{ out.send(bytes); }catch(e){ showMsg("Senden fehlgeschlagen: "+e.message); } } }
+  const cc = (ch,c,v) => send([0xB0|ch, c, v]);
+  function setVoice(ch, idx){
+    const v = VOICES[idx];
+    cc(ch, 0, v.msb); cc(ch, 32, v.lsb); send([0xC0|ch, v.pc-1]);
+  }
+  function rpn(ch, msb, lsb, dMsb, dLsb){
+    cc(ch,101,msb); cc(ch,100,lsb); cc(ch,6,dMsb); if(dLsb!==undefined) cc(ch,38,dLsb);
+    cc(ch,101,127); cc(ch,100,127); // RPN Null
+  }
+  function sendTune(){
+    // Fine Tuning RPN 0/1: 8192 = 0 Cent, ±8192 = ±100 Cent
+    const cents = 1200*Math.log2(S.tuneHz/440);
+    let val = Math.round(8192 + cents/100*8192); val = Math.max(0, Math.min(16383, val));
+    [CH_MAIN,CH_LAYER,CH_LEFT].forEach(ch => rpn(ch,0,1,val>>7,val&127));
+  }
+  function sendMix(){
+    cc(CH_MAIN,7,S.vol); cc(CH_LAYER,7,Math.round(S.layerVol*S.vol/127)); cc(CH_LEFT,7,Math.round(S.leftVol*S.vol/127));
+    [CH_MAIN,CH_LAYER,CH_LEFT].forEach(ch => { cc(ch,91,S.rev); cc(ch,93,S.cho); cc(ch,74,S.bri); cc(ch,10,S.pan); });
+  }
+  function sendAll(){
+    setVoice(CH_MAIN,S.voice); setVoice(CH_LAYER,S.layerVoice); setVoice(CH_LEFT,S.leftVoice);
+    sendMix(); sendTune();
+  }
+  function panic(){
+    for(let ch=0; ch<16; ch++){ cc(ch,64,0); cc(ch,120,0); cc(ch,123,0); }
+    held.clear(); document.querySelectorAll(".key.down").forEach(k=>k.classList.remove("down"));
+    ["sus","sos","soft"].forEach(id=>$(id).classList.remove("on"));
+  }
+
+  // ---------- Noten-Routing (Layer/Split/Transpose) ----------
+  const held = new Map(); // key -> [[ch,note],...]
+  function targets(note){
+    const t = [];
+    if(S.split && note < S.splitPt) t.push(CH_LEFT);
+    else { t.push(CH_MAIN); if(S.layer) t.push(CH_LAYER); }
+    return t;
+  }
+  function noteOn(key, note, vel){
+    if(held.has(key)) noteOff(key);
+    const n = note + S.transpose; if(n<0||n>127) return;
+    const list = targets(note).map(ch => [ch,n]);
+    list.forEach(([ch,nn]) => send([0x90|ch, nn, vel]));
+    held.set(key, list);
+    if(recording) recEvents.push([performance.now()-recStart, "on", note, vel]);
+  }
+  function noteOff(key, note){
+    const list = held.get(key); if(!list) return;
+    list.forEach(([ch,nn]) => send([0x80|ch, nn, 64]));
+    held.delete(key);
+    if(recording && note!==undefined) recEvents.push([performance.now()-recStart, "off", note, 0]);
+  }
+  function pedal(c, v){
+    const chans = [CH_MAIN]; if(S.layer) chans.push(CH_LAYER); if(S.split) chans.push(CH_LEFT);
+    chans.forEach(ch => cc(ch,c,v));
+  }
+
+  // ---------- MIDI-Eingang ----------
+  function onMidiIn(e){
+    const [st, d1, d2] = e.data; const type = st & 0xF0;
+    if(!echo && !recording) return;
+    if(type===0x90 && d2>0){
+      if(echo) noteOn("in"+d1, d1, d2);
+      else if(recording) recEvents.push([performance.now()-recStart,"on",d1,d2]);
+    } else if(type===0x80 || (type===0x90 && d2===0)){
+      if(echo) noteOff("in"+d1, d1);
+      else if(recording) recEvents.push([performance.now()-recStart,"off",d1,0]);
+    } else if(type===0xB0 && (d1===64||d1===66||d1===67)){
+      if(echo) pedal(d1,d2);
+      if(recording) recEvents.push([performance.now()-recStart,"cc",d1,d2]);
+    }
+  }
+
+  // ---------- Verbindung ----------
+  async function connect(){
+    if(!navigator.requestMIDIAccess){
+      showMsg("Dieser Browser kann kein Web MIDI. Bitte Chrome auf Android verwenden (auf dem iPhone eine Web-MIDI-Browser-App).");
+      return;
+    }
+    try{
+      midi = await navigator.requestMIDIAccess({sysex:false});
+    }catch(e){
+      showMsg("MIDI-Zugriff verweigert oder blockiert ("+e.message+"). Seite direkt im Browser über https öffnen und Zugriff erlauben.");
+      return;
+    }
+    midi.onstatechange = refreshPorts;
+    refreshPorts();
+    $("ports").classList.remove("hide");
+  }
+  function refreshPorts(){
+    const outs=[...midi.outputs.values()], ins=[...midi.inputs.values()];
+    const fill=(sel,list,cur)=>{
+      sel.innerHTML = list.length ? "" : "<option value=''>– kein Gerät gefunden –</option>";
+      list.forEach(p=>{ const o=document.createElement("option"); o.value=p.id; o.textContent=p.name; sel.appendChild(o); });
+      const pref = list.find(p=>p.id===cur) || list.find(p=>/clp|clavinova|yamaha|digital piano/i.test(p.name)) || list[0];
+      if(pref) sel.value=pref.id;
+    };
+    fill($("outSel"),outs,out&&out.id); fill($("inSel"),ins,inp&&inp.id);
+    pickPorts();
+  }
+  function pickPorts(){
+    const newOut = midi.outputs.get($("outSel").value) || null;
+    const newIn  = midi.inputs.get($("inSel").value) || null;
+    if(inp && inp!==newIn) inp.onmidimessage = null;
+    const changed = newOut && newOut!==out;
+    out=newOut; inp=newIn;
+    if(inp) inp.onmidimessage = onMidiIn;
+    $("dot").classList.toggle("on", !!out);
+    $("status").textContent = out ? "Verbunden: "+out.name : "Kein Ausgang gefunden";
+    if(changed){ sendAll(); showMsg("Verbunden mit "+out.name, true); $("connect").textContent="Neu verbinden"; }
+    if(!out) showMsg("Kein MIDI-Gerät gefunden. Ist das Klavier per USB-Kabel oder Bluetooth-MIDI verbunden und eingeschaltet?");
+  }
+  $("connect").onclick = connect;
+  $("outSel").onchange = pickPorts; $("inSel").onchange = pickPorts;
+  $("panic").onclick = panic;
+
+  // ---------- UI: Klänge ----------
+  function voiceButtons(){
+    const g=$("voices"); g.innerHTML="";
+    VOICES.forEach((v,i)=>{
+      const b=document.createElement("button"); b.textContent=v.n;
+      if(i===S.voice) b.classList.add("sel");
+      b.onclick=()=>{ S.voice=i; setVoice(CH_MAIN,i); save(); voiceButtons(); };
+      g.appendChild(b);
+    });
+  }
+  function fillVoiceSel(sel, cur, onch){
+    sel.innerHTML = VOICES.map((v,i)=>`<option value="${i}">${v.n}</option>`).join("");
+    sel.value=cur; sel.onchange=()=>onch(+sel.value);
+  }
+  fillVoiceSel($("layerVoice"), S.layerVoice, i=>{S.layerVoice=i; setVoice(CH_LAYER,i); save();});
+  fillVoiceSel($("leftVoice"),  S.leftVoice,  i=>{S.leftVoice=i;  setVoice(CH_LEFT,i);  save();});
+
+  function layerSplitUI(){
+    $("layerBtn").textContent="Layer: "+(S.layer?"an":"aus"); $("layerBtn").classList.toggle("on",S.layer);
+    $("splitBtn").textContent="Split: "+(S.split?"an":"aus"); $("splitBtn").classList.toggle("on",S.split);
+    $("layerBox").classList.toggle("hide",!S.layer); $("splitBox").classList.toggle("hide",!S.split);
+  }
+  $("layerBtn").onclick=()=>{ S.layer=!S.layer; save(); layerSplitUI(); };
+  $("splitBtn").onclick=()=>{ S.split=!S.split; save(); layerSplitUI(); };
+
+  // ---------- UI: Slider ----------
+  function slider(id, key, fmt, onInput){
+    const el=$(id), lab=$(id+"V"); el.value=S[key];
+    const show=()=>lab.textContent=fmt?fmt(+el.value):el.value; show();
+    el.oninput=()=>{ S[key]=+el.value; show(); onInput(+el.value); save(); };
+  }
+  slider("vol","vol",null,()=>sendMix());
+  slider("rev","rev",null,v=>[CH_MAIN,CH_LAYER,CH_LEFT].forEach(ch=>cc(ch,91,v)));
+  slider("cho","cho",null,v=>[CH_MAIN,CH_LAYER,CH_LEFT].forEach(ch=>cc(ch,93,v)));
+  slider("bri","bri",null,v=>[CH_MAIN,CH_LAYER,CH_LEFT].forEach(ch=>cc(ch,74,v)));
+  slider("pan","pan",v=>v===64?"C":(v<64?"L"+(64-v):"R"+(v-64)),v=>[CH_MAIN,CH_LAYER,CH_LEFT].forEach(ch=>cc(ch,10,v)));
+  slider("layerVol","layerVol",null,()=>sendMix());
+  slider("leftVol","leftVol",null,()=>sendMix());
+  slider("splitPt","splitPt",noteName,()=>{});
+  slider("vel","vel",null,()=>{});
+
+  // ---------- Transpose / Tuning ----------
+  function trUI(){ $("trV").textContent=(S.transpose>0?"+":"")+S.transpose; $("tuV").textContent=S.tuneHz.toFixed(1); }
+  $("trUp").onclick=()=>{ if(S.transpose<12){ panicNotes(); S.transpose++; save(); trUI(); } };
+  $("trDown").onclick=()=>{ if(S.transpose>-12){ panicNotes(); S.transpose--; save(); trUI(); } };
+  $("tuUp").onclick=()=>{ S.tuneHz=Math.min(446,+(S.tuneHz+0.2).toFixed(1)); sendTune(); save(); trUI(); };
+  $("tuDown").onclick=()=>{ S.tuneHz=Math.max(434,+(S.tuneHz-0.2).toFixed(1)); sendTune(); save(); trUI(); };
+  function panicNotes(){ [...held.keys()].forEach(k=>noteOff(k)); }
+
+  // ---------- Pedale ----------
+  [["sus",64],["sos",66],["soft",67]].forEach(([id,c])=>{
+    $(id).onclick=()=>{ const on=!$(id).classList.contains("on"); $(id).classList.toggle("on",on); pedal(c,on?127:0); };
+  });
+
+  // ---------- Klavier über App (Local Off + Echo) ----------
+  function echoUI(){
+    $("echoBtn").textContent = echo ? "An – Tasten laufen über die App" : "Aus – Klavier spielt normal";
+    $("echoBtn").classList.toggle("on",echo);
+  }
+  $("echoBtn").onclick=()=>{
+    if(!out){ showMsg("Erst mit dem Klavier verbinden."); return; }
+    if(!echo && !inp){ showMsg("Kein MIDI-Eingang gewählt – ohne Eingang würde das Klavier stumm bleiben."); return; }
+    echo=!echo;
+    panicNotes();
+    cc(CH_MAIN,122, echo?0:127); // Local Control aus/an
+    echoUI();
+  };
+  window.addEventListener("pagehide",()=>{ if(echo && out) cc(CH_MAIN,122,127); });
+
+  // ---------- Bildschirm-Tastatur ----------
+  const kb=$("kb");
+  function buildKb(){
+    kb.innerHTML="";
+    const start=S.oct*12, end=start+24; // C..C (2 Oktaven + 1)
+    const whites=[]; for(let n=start;n<=end;n++) if(![1,3,6,8,10].includes(n%12)) whites.push(n);
+    const ww=100/whites.length;
+    whites.forEach((n,i)=>addKey(n,"w",i*ww,ww));
+    for(let n=start;n<=end;n++) if([1,3,6,8,10].includes(n%12)){
+      const i=whites.indexOf(n-1); addKey(n,"b",(i+1)*ww-ww*0.3,ww*0.6);
+    }
+    $("octV").textContent=noteName(start)+"–"+noteName(end);
+  }
+  function addKey(n,cls,left,width){
+    const k=document.createElement("div"); k.className="key "+cls; k.dataset.n=n;
+    k.style.left=left+"%"; k.style.width=width+"%";
+    if(cls==="w" && n%12===0){ const l=document.createElement("div"); l.className="lbl"; l.textContent=noteName(n); k.appendChild(l); }
+    kb.appendChild(k);
+  }
+  const pointerNote=new Map();
+  function keyAt(x,y){ const el=document.elementFromPoint(x,y); return el && el.closest(".key"); }
+  function press(pid,k){
+    const prev=pointerNote.get(pid); if(prev===k) return;
+    if(prev){ prev.classList.remove("down"); noteOff("p"+pid, +prev.dataset.n); }
+    if(k){ k.classList.add("down"); noteOn("p"+pid, +k.dataset.n, S.vel); }
+    pointerNote.set(pid,k||null);
+  }
+  function release(pid){ const k=pointerNote.get(pid); if(k){ k.classList.remove("down"); noteOff("p"+pid, +k.dataset.n); } pointerNote.delete(pid); }
+  kb.addEventListener("pointerdown",e=>{ e.preventDefault(); kb.setPointerCapture(e.pointerId); press(e.pointerId,keyAt(e.clientX,e.clientY)); });
+  kb.addEventListener("pointermove",e=>{ if(pointerNote.has(e.pointerId)) press(e.pointerId,keyAt(e.clientX,e.clientY)); });
+  ["pointerup","pointercancel"].forEach(t=>kb.addEventListener(t,e=>release(e.pointerId)));
+  $("octUp").onclick=()=>{ if(S.oct<7){S.oct++; save(); buildKb();} };
+  $("octDown").onclick=()=>{ if(S.oct>1){S.oct--; save(); buildKb();} };
+
+  // ---------- Aufnahme ----------
+  let recording=false, recStart=0, recEvents=[], playTimers=[];
+  $("recBtn").onclick=()=>{
+    if(!recording){
+      if(!inp){ showMsg("Kein MIDI-Eingang – zum Aufnehmen das Klavier verbinden."); return; }
+      stopPlay(); recEvents=[]; recStart=performance.now(); recording=true;
+      $("recBtn").textContent="■ Aufnahme stoppen"; $("recBtn").classList.add("rec");
+      $("recInfo").textContent="Aufnahme läuft … spiel los.";
+    } else {
+      recording=false; $("recBtn").textContent="● Aufnehmen"; $("recBtn").classList.remove("rec");
+      const notes=recEvents.filter(e=>e[1]==="on").length;
+      const dur=recEvents.length?(recEvents[recEvents.length-1][0]/1000).toFixed(1):0;
+      $("recInfo").textContent=`Aufgenommen: ${notes} Noten, ${dur} s.`;
+    }
+  };
+  function stopPlay(){ playTimers.forEach(clearTimeout); playTimers=[]; panicNotes(); pedal(64,0); $("playBtn").textContent="▶ Abspielen"; }
+  $("playBtn").onclick=()=>{
+    if(playTimers.length){ stopPlay(); return; }
+    if(!recEvents.length){ showMsg("Noch nichts aufgenommen."); return; }
+    if(recording) $("recBtn").click();
+    $("playBtn").textContent="■ Stopp";
+    recEvents.forEach(([t,kind,a,b])=>{
+      playTimers.push(setTimeout(()=>{
+        if(kind==="on") noteOn("r"+a,a,b); else if(kind==="off") noteOff("r"+a); else pedal(a,b);
+      }, t));
+    });
+    playTimers.push(setTimeout(stopPlay, recEvents[recEvents.length-1][0]+300));
+  };
+
+  // ---------- Metronom (Web Audio) ----------
+  let actx=null, metTimer=null, nextT=0, beat=0;
+  function click(t, accent){
+    const o=actx.createOscillator(), g=actx.createGain();
+    o.frequency.value=accent?1600:1000; g.gain.setValueAtTime(0.0001,t);
+    g.gain.exponentialRampToValueAtTime(accent?0.9:0.5,t+0.002); g.gain.exponentialRampToValueAtTime(0.0001,t+0.05);
+    o.connect(g).connect(actx.destination); o.start(t); o.stop(t+0.06);
+  }
+  function sched(){
+    while(nextT < actx.currentTime+0.12){
+      click(nextT, S.beats>0 && beat%S.beats===0); beat++;
+      nextT += (S.beats===6 ? 30 : 60)/S.bpm;
+    }
+  }
+  $("metBtn").onclick=()=>{
+    if(metTimer){ clearInterval(metTimer); metTimer=null; $("metBtn").textContent="Start"; $("metBtn").classList.remove("on"); return; }
+    actx = actx || new (window.AudioContext||window.webkitAudioContext)(); actx.resume();
+    beat=0; nextT=actx.currentTime+0.05; metTimer=setInterval(sched,25);
+    $("metBtn").textContent="Stopp"; $("metBtn").classList.add("on");
+  };
+  const bpmUI=()=>$("bpmV").textContent=S.bpm;
+  $("bpmUp").onclick=()=>{ S.bpm=Math.min(280,S.bpm+(S.bpm>=120?4:2)); bpmUI(); save(); };
+  $("bpmDown").onclick=()=>{ S.bpm=Math.max(20,S.bpm-(S.bpm>120?4:2)); bpmUI(); save(); };
+  $("beats").value=S.beats; $("beats").onchange=()=>{ S.beats=+$("beats").value; save(); };
+
+  // ---------- Start ----------
+  voiceButtons(); layerSplitUI(); trUI(); echoUI(); buildKb(); bpmUI();
+  if(!navigator.requestMIDIAccess){
+    showMsg("Hinweis: Dieser Browser unterstützt kein Web MIDI. Öffne die Seite in Chrome auf Android (iPhone: Web-MIDI-fähige Browser-App).");
+  }
+})();
+</script>
+</body>
+</html>
