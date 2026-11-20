@@ -136,7 +136,8 @@
   <!-- Mixer -->
   <section>
     <h2>Mixer</h2>
-    <label class="slider"><span>Lautstärke</span><input type="range" id="vol" min="0" max="127" value="100"><span id="volV">100</span></label>
+    <label class="slider"><span>Klavier</span><input type="range" id="vol" min="0" max="127" value="100"><span id="volV">100</span></label>
+    <label class="slider"><span>Handy-Klänge</span><input type="range" id="phoneVol" min="0" max="127" value="110"><span id="phoneVolV">110</span></label>
     <label class="slider"><span>Hall</span><input type="range" id="rev" min="0" max="127" value="40"><span id="revV">40</span></label>
     <label class="slider"><span>Chorus</span><input type="range" id="cho" min="0" max="127" value="0"><span id="choV">0</span></label>
     <label class="slider"><span>Helligkeit</span><input type="range" id="bri" min="0" max="127" value="64"><span id="briV">64</span></label>
@@ -280,7 +281,7 @@
     applyPhoneMix();
     return actx;
   }
-  function applyPhoneMix(){ if(!actx) return; master.gain.value = (S.vol/127)*1.2; revSend.gain.value = S.rev/127*0.9; }
+  function applyPhoneMix(){ if(!actx) return; master.gain.value = (S.phoneVol/127)*1.2; revSend.gain.value = S.rev/127*0.9; }
   const SF_URLS = id => [
     `https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/${id}-mp3.js`,
     `https://cdn.jsdelivr.net/gh/gleitz/midi-js-soundfonts@gh-pages/FluidR3_GM/${id}-mp3.js`,
@@ -354,7 +355,7 @@
     voice:0, layer:false, layerVoice:9, layerVol:90,
     split:false, leftVoice:9, splitPt:54, leftVol:100,
     vol:100, rev:40, cho:0, bri:64, pan:64,
-    transpose:0, tuneHz:440.0, oct:4, vel:90, bpm:90, beats:4,
+    phoneVol:110, transpose:0, tuneHz:440.0, oct:4, vel:90, bpm:90, beats:4,
   };
   try { Object.assign(S, JSON.parse(localStorage.getItem("clp825") || "{}")); } catch(e){}
   const save = () => { try { localStorage.setItem("clp825", JSON.stringify(S)); } catch(e){} };
@@ -586,9 +587,7 @@
       const b=document.createElement("button"); b.textContent=v.n;
       if(i===S.voice) b.classList.add("sel");
       b.onclick=()=>{
-        if(isPhone(i)){ unlockAudio(); audio().resume();
-          loadBank(v.gm).then(()=>{ const s1=playSample(i,60,100,1), s2=playSample(i,67,90,1); setTimeout(()=>{releaseSample(s1);releaseSample(s2);},700); }).catch(()=>{}); }
-        if(isPhone(i) && !isPhone(S.voice)) cc(CH_MAIN,123,0);
+        if(isPhone(i)){ unlockAudio(); audio().resume(); }
         S.voice=i; setVoice(CH_MAIN,i); save(); voiceButtons();
         if(!echo && out && setEcho(true)) showMsg("Klang „"+v.n+"“ – die Tasten am Klavier spielen jetzt über die App.", true);
       };
@@ -618,7 +617,8 @@
     const show=()=>lab.textContent=fmt?fmt(+el.value):el.value; show();
     el.oninput=()=>{ S[key]=+el.value; show(); onInput(+el.value); save(); };
   }
-  slider("vol","vol",null,()=>{ sendMix(); applyPhoneMix(); });
+  slider("vol","vol",null,()=>sendMix());
+  slider("phoneVol","phoneVol",null,()=>applyPhoneMix());
   slider("rev","rev",null,v=>{ [CH_MAIN,CH_LAYER,CH_LEFT].forEach(ch=>cc(ch,91,v)); applyPhoneMix(); });
   slider("cho","cho",null,v=>[CH_MAIN,CH_LAYER,CH_LEFT].forEach(ch=>cc(ch,93,v)));
   slider("bri","bri",null,v=>[CH_MAIN,CH_LAYER,CH_LEFT].forEach(ch=>cc(ch,74,v)));
@@ -651,7 +651,7 @@
   function setEcho(on){
     if(on && !out){ showMsg("Erst mit dem Klavier verbinden."); return false; }
     if(on && !inp){ showMsg("Kein Eingang vom Klavier gewählt. Unter „Verbindung“ beim Eingang das Klavier (z. B. „CLP-825 …“) auswählen."); return false; }
-    echo=on; panicNotes();
+    echo=on; if(!on) panicNotes();
     for(let ch=0; ch<16; ch++) cc(ch,122, on?0:127); // Local Control aus/an
     keyCount=0; echoUI(); return true;
   }
