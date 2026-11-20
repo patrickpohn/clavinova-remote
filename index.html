@@ -19,6 +19,7 @@
   header h1{font-size:17px;margin:0;font-weight:650;letter-spacing:.2px;flex:1}
   header h1 small{display:block;font-size:11px;color:var(--muted);font-weight:400}
   .dot{width:10px;height:10px;border-radius:50%;background:var(--danger);box-shadow:0 0 8px var(--danger)}
+  .dot.warn{background:var(--accent);box-shadow:0 0 8px var(--accent)}
   .dot.on{background:var(--accent2);box-shadow:0 0 8px var(--accent2)}
   main{padding:12px 12px 40px;max-width:720px;margin:0 auto}
   section{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px;margin-bottom:12px}
@@ -77,6 +78,15 @@
       <select id="outSel"></select>
       <div class="muted" style="margin-top:8px">Eingang (vom Klavier)</div>
       <select id="inSel"></select>
+      <div class="row" style="margin-top:10px">
+        <button id="testBtn" style="flex:1">♪ Test-Ton ans Klavier</button>
+      </div>
+      <div class="row hide" id="testAsk" style="margin-top:8px">
+        <span style="flex:1">Hat das Klavier gespielt?</span>
+        <button id="testYes">Ja</button><button id="testNo">Nein</button>
+      </div>
+      <p class="muted" id="inAct" style="margin:8px 0 0">Eingang: noch keine Daten. Drück eine Taste am Klavier zum Prüfen.</p>
+      <details><summary>Gefundene MIDI-Geräte</summary><pre class="muted" id="portList" style="white-space:pre-wrap;margin:6px 0 0"></pre></details>
     </div>
   </section>
 
@@ -389,6 +399,8 @@
   // ---------- MIDI-Eingang ----------
   function onMidiIn(e){
     const [st, d1, d2] = e.data; const type = st & 0xF0;
+    if(st!==0xFE && st!==0xF8){ inCount++; if(!inSeen){ inSeen=true; confirmed=true; setStatus(); }
+      $("inAct").textContent = "Eingang ✓ empfängt Daten vom Klavier ("+inCount+" Nachrichten)"; }
     if(!echo && !recording) return;
     if(type===0x90 && d2>0){
       if(echo) noteOn("in"+d1, d1, d2);
@@ -420,29 +432,56 @@
     refreshPorts();
     $("ports").classList.remove("hide");
   }
+  let confirmed=false, inSeen=false, inCount=0;
+  const PIANO_RE=/clp|clavinova|yamaha|digital piano/i;
+  function setStatus(){
+    const d=$("dot"); d.classList.remove("on","warn");
+    if(!out){ $("status").textContent="Kein Ausgang gefunden"; return; }
+    if(confirmed){ d.classList.add("on"); $("status").textContent="Verbunden ✓ "+out.name; }
+    else { d.classList.add("warn"); $("status").textContent="Nicht bestätigt: "+out.name+" – Test-Ton drücken"; }
+  }
+  function listPorts(){
+    const f=p=>`• ${p.name} (${p.manufacturer||"?"}) – ${p.state==="connected"?"verbunden":"getrennt"}`;
+    $("portList").textContent="Ausgänge:\n"+([...midi.outputs.values()].map(f).join("\n")||"– keine –")+
+      "\n\nEingänge:\n"+([...midi.inputs.values()].map(f).join("\n")||"– keine –");
+  }
   function refreshPorts(){
     const outs=[...midi.outputs.values()], ins=[...midi.inputs.values()];
     const fill=(sel,list,cur)=>{
       sel.innerHTML = list.length ? "" : "<option value=''>– kein Gerät gefunden –</option>";
       list.forEach(p=>{ const o=document.createElement("option"); o.value=p.id; o.textContent=p.name; sel.appendChild(o); });
-      const pref = list.find(p=>p.id===cur) || list.find(p=>/clp|clavinova|yamaha|digital piano/i.test(p.name)) || list[0];
+      const pref = list.find(p=>p.id===cur) || list.find(p=>PIANO_RE.test(p.name)) || list[0];
       if(pref) sel.value=pref.id;
     };
     fill($("outSel"),outs,out&&out.id); fill($("inSel"),ins,inp&&inp.id);
-    pickPorts();
+    listPorts(); pickPorts();
   }
   function pickPorts(){
     const newOut = midi.outputs.get($("outSel").value) || null;
     const newIn  = midi.inputs.get($("inSel").value) || null;
     if(inp && inp!==newIn) inp.onmidimessage = null;
     const changed = newOut && newOut!==out;
+    if(changed || newIn!==inp){ confirmed=false; inSeen=false; inCount=0; $("inAct").textContent="Eingang: noch keine Daten. Drück eine Taste am Klavier zum Prüfen."; }
     out=newOut; inp=newIn;
     if(inp) inp.onmidimessage = onMidiIn;
-    $("dot").classList.toggle("on", !!out);
-    $("status").textContent = out ? "Verbunden: "+out.name : "Kein Ausgang gefunden";
-    if(changed){ sendAll(); showMsg("Verbunden mit "+out.name, true); $("connect").textContent="Neu verbinden"; }
-    if(!out) showMsg("Kein MIDI-Gerät gefunden. Ist das Klavier per USB-Kabel oder Bluetooth-MIDI verbunden und eingeschaltet?");
+    if(out && out.state!=="connected" && out.open) out.open().catch(()=>{});
+    setStatus(); $("connect").textContent="Neu verbinden";
+    if(changed){
+      sendAll();
+      if(PIANO_RE.test(out.name)) showMsg("Ausgang „"+out.name+"“ gewählt. Tipp auf „Test-Ton“, um zu prüfen, ob das Klavier reagiert.", true);
+      else showMsg("Das Klavier wurde nicht gefunden – gewählt ist „"+out.name+"“, das ist vermutlich nicht dein Klavier. Bluetooth-MIDI bzw. Kabel prüfen und dann „Neu verbinden“.");
+    }
+    if(!out) showMsg("Kein MIDI-Gerät gefunden. Ist das Klavier per USB-Kabel oder Bluetooth-MIDI („CLP-825 MIDI“) verbunden und eingeschaltet?");
   }
+  $("testBtn").onclick=()=>{
+    if(!out){ showMsg("Kein Ausgang gewählt."); return; }
+    setVoice(CH_MAIN, isPhone(S.voice)?0:S.voice); cc(CH_MAIN,7,110);
+    [60,64,67,72].forEach((n,i)=>{ setTimeout(()=>send([0x90,n,100]),i*180); setTimeout(()=>send([0x80,n,64]),i*180+600); });
+    setTimeout(()=>{ cc(CH_MAIN,7,S.vol); $("testAsk").classList.remove("hide"); }, 1300);
+  };
+  $("testYes").onclick=()=>{ confirmed=true; setStatus(); $("testAsk").classList.add("hide"); showMsg("Verbindung bestätigt.", true); };
+  $("testNo").onclick=()=>{ $("testAsk").classList.add("hide");
+    showMsg("Das Klavier empfängt nichts. Wähle oben einen anderen Ausgang (Liste „Gefundene MIDI-Geräte“), prüfe die Lautstärke am Klavier und ob Bluetooth-MIDI wirklich mit „CLP-825 MIDI“ verbunden ist. Smart Pianist vorher ganz schließen."); };
   $("connect").onclick = connect;
   $("outSel").onchange = pickPorts; $("inSel").onchange = pickPorts;
   $("panic").onclick = panic;
