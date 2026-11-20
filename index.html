@@ -181,7 +181,17 @@
       <button id="recBtn" style="flex:1">● Aufnehmen</button>
       <button id="playBtn" style="flex:1">▶ Abspielen</button>
     </div>
-    <p class="muted" id="recInfo" style="margin:8px 0 0">Nimmt auf, was du am Klavier spielst, und spielt es übers Klavier wieder ab (benötigt MIDI-Eingang).</p>
+    <p class="muted" id="recInfo" style="margin:8px 0 0">Nimmt auf, was du am Klavier oder auf der Handy-Tastatur spielst, und spielt es wieder ab.</p>
+    <h2 style="margin-top:14px">Test-Melodie</h2>
+    <div class="row">
+      <button id="saveTest" style="flex:1">Aufnahme als Test-Ton</button>
+      <button id="midiFileBtn" style="flex:1">MIDI-Datei laden</button>
+      <input type="file" id="midiFile" accept=".mid,.midi,audio/midi" class="hide">
+    </div>
+    <div class="row" style="margin-top:8px">
+      <button id="resetTest" style="flex:1">Standard-Test-Ton</button>
+    </div>
+    <p class="muted" id="testInfo" style="margin:8px 0 0"></p>
   </section>
 
   <!-- Metronom -->
@@ -473,12 +483,67 @@
     }
     if(!out) showMsg("Kein MIDI-Gerät gefunden. Ist das Klavier per USB-Kabel oder Bluetooth-MIDI („CLP-825 MIDI“) verbunden und eingeschaltet?");
   }
+  // ---------- Test-Melodie ----------
+  let testMel=null; // [[ms,"on"|"off",note,vel],...]
+  try{ const t=JSON.parse(localStorage.getItem("clp825test")||"null"); if(t&&t.ev&&t.ev.length) testMel=t; }catch(e){}
+  function saveTestMel(ev,name){
+    const t0=ev.find(e=>e[1]==="on"); if(!t0) { showMsg("Keine Noten gefunden."); return; }
+    ev=ev.filter(e=>e[1]!=="cc").map(e=>[e[0]-t0[0],e[1],e[2],e[3]]).filter(e=>e[0]>=0 && e[0]<=60000);
+    testMel={name,ev}; try{ localStorage.setItem("clp825test",JSON.stringify(testMel)); }catch(e){}
+    testInfoUI(); showMsg("Test-Melodie gespeichert: "+name, true);
+  }
+  function testInfoUI(){ $("testInfo").textContent = testMel ? "Aktuell: „"+testMel.name+"“ ("+testMel.ev.filter(e=>e[1]==="on").length+" Noten, max. 60 s)" : "Aktuell: Standard (C-Dur-Akkord)"; }
+  let testTimers=[];
   $("testBtn").onclick=()=>{
     if(!out){ showMsg("Kein Ausgang gewählt."); return; }
+    testTimers.forEach(clearTimeout); testTimers=[];
+    for(let n=0;n<128;n++) send([0x80,n,0]);
     setVoice(CH_MAIN, isPhone(S.voice)?0:S.voice); cc(CH_MAIN,7,110);
-    [60,64,67,72].forEach((n,i)=>{ setTimeout(()=>send([0x90,n,100]),i*180); setTimeout(()=>send([0x80,n,64]),i*180+600); });
-    setTimeout(()=>{ cc(CH_MAIN,7,S.vol); $("testAsk").classList.remove("hide"); }, 1300);
+    const ev = testMel ? testMel.ev : [[0,"on",60,100],[180,"on",64,100],[360,"on",67,100],[540,"on",72,100],[600,"off",60],[780,"off",64],[960,"off",67],[1140,"off",72]];
+    const tr = S.transpose;
+    ev.forEach(([t,k,n,v])=>testTimers.push(setTimeout(()=>{ const nn=n+tr; if(nn<0||nn>127) return; send(k==="on"?[0x90,nn,v||100]:[0x80,nn,64]); },t)));
+    const end = ev[ev.length-1][0]+400;
+    testTimers.push(setTimeout(()=>{ cc(CH_MAIN,7,S.vol); $("testAsk").classList.remove("hide"); }, Math.min(end,2500)));
+    testTimers.push(setTimeout(()=>{ for(let n=0;n<128;n++) send([0x80,n,0]); }, end));
   };
+  $("saveTest").onclick=()=>{ if(recording) $("recBtn").click(); if(!recEvents.length){ showMsg("Erst etwas aufnehmen (Abschnitt Aufnahme)."); return; } saveTestMel(recEvents.slice(),"Eigene Aufnahme"); };
+  $("resetTest").onclick=()=>{ testMel=null; try{ localStorage.removeItem("clp825test"); }catch(e){} testInfoUI(); };
+  $("midiFileBtn").onclick=()=>$("midiFile").click();
+  $("midiFile").onchange=async()=>{
+    const f=$("midiFile").files[0]; if(!f) return;
+    try{ saveTestMel(parseMidi(new Uint8Array(await f.arrayBuffer())), f.name.replace(/\.midi?$/i,"")); }
+    catch(e){ showMsg("MIDI-Datei konnte nicht gelesen werden: "+e.message); }
+    $("midiFile").value="";
+  };
+  // Standard-MIDI-Datei (Typ 0/1) -> Noten-Events in ms
+  function parseMidi(b){
+    let p=0; const u32=()=>(b[p++]<<24|b[p++]<<16|b[p++]<<8|b[p++])>>>0, u16=()=>b[p++]<<8|b[p++];
+    const vlq=()=>{ let v=0,c; do{ c=b[p++]; v=(v<<7)|(c&127); }while(c&128); return v; };
+    if(String.fromCharCode(...b.slice(0,4))!=="MThd") throw new Error("keine MIDI-Datei");
+    p=4; const hl=u32(); u16(); const nt=u16(), div=u16(); p=8+hl;
+    if(div&0x8000) throw new Error("SMPTE-Zeitbasis nicht unterstützt");
+    const all=[], tempos=[[0,500000]];
+    for(let t=0;t<nt && p<b.length;t++){
+      const id=String.fromCharCode(...b.slice(p,p+4)); p+=4; const len=u32(), end=p+len;
+      if(id!=="MTrk"){ p=end; continue; }
+      let tick=0, rs=0;
+      while(p<end){
+        tick+=vlq(); let st=b[p];
+        if(st&128){ p++; if(st<0xF0) rs=st; } else st=rs;
+        if(st===0xFF){ const ty=b[p++], l=vlq(); if(ty===0x51) tempos.push([tick,(b[p]<<16)|(b[p+1]<<8)|b[p+2]]); p+=l; }
+        else if(st===0xF0||st===0xF7){ p+=vlq(); }
+        else { const hi=st&0xF0, d1=b[p++], d2=(hi===0xC0||hi===0xD0)?0:b[p++];
+          if((st&15)!==9){ // Schlagzeugkanal ignorieren
+            if(hi===0x90&&d2>0) all.push([tick,"on",d1,d2]); else if(hi===0x80||hi===0x90) all.push([tick,"off",d1,0]); }
+        }
+      }
+      p=end;
+    }
+    tempos.sort((a,c)=>a[0]-c[0]); all.sort((a,c)=>a[0]-c[0]||(a[1]==="off"?-1:1));
+    const ms=tick=>{ let t=0,lt=0,tp=500000; for(const [tk,v] of tempos){ if(tk>=tick) break; t+=(tk-lt)*tp/div/1000; lt=tk; tp=v; } return t+(tick-lt)*tp/div/1000; };
+    return all.map(([tk,k,n,v])=>[ms(tk),k,n,v]);
+  }
+  testInfoUI();
   $("testYes").onclick=()=>{ confirmed=true; setStatus(); $("testAsk").classList.add("hide"); showMsg("Verbindung bestätigt.", true); };
   $("testNo").onclick=()=>{ $("testAsk").classList.add("hide");
     showMsg("Das Klavier empfängt nichts. Wähle oben einen anderen Ausgang (Liste „Gefundene MIDI-Geräte“), prüfe die Lautstärke am Klavier und ob Bluetooth-MIDI wirklich mit „CLP-825 MIDI“ verbunden ist. Smart Pianist vorher ganz schließen."); };
@@ -599,7 +664,6 @@
   let recording=false, recStart=0, recEvents=[], playTimers=[];
   $("recBtn").onclick=()=>{
     if(!recording){
-      if(!inp){ showMsg("Kein MIDI-Eingang – zum Aufnehmen das Klavier verbinden."); return; }
       stopPlay(); recEvents=[]; recStart=performance.now(); recording=true;
       $("recBtn").textContent="■ Aufnahme stoppen"; $("recBtn").classList.add("rec");
       $("recInfo").textContent="Aufnahme läuft … spiel los.";
