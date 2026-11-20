@@ -128,7 +128,9 @@
   <section>
     <h2>Klavier über App spielen</h2>
     <button id="echoBtn" style="width:100%">Aus – Klavier spielt normal</button>
-    <p class="muted" style="margin:8px 0 0">Schaltet am Klavier „Local Control“ aus und leitet deine Tasten über die App zurück. So greifen Klangwahl, Layer, Split und Transponieren der App auch auf die echten Tasten. Braucht einen MIDI-Eingang (Kabel empfohlen, Bluetooth hat etwas Verzögerung).</p>
+    <p class="muted" style="margin:8px 0 0">Schaltet am Klavier „Local Control“ aus und leitet deine Tasten über die App zurück. So greifen Klangwahl, Layer, Split und Transponieren der App auch auf die echten Tasten. Braucht einen MIDI-Eingang (Kabel empfohlen, Bluetooth hat etwas Verzögerung). Wird automatisch eingeschaltet, sobald du einen Klang wählst.</p>
+    <p id="echoState" style="margin:8px 0 0;color:var(--accent2)"></p>
+    <p class="muted" style="margin:8px 0 0"><b>Hörst du weiterhin (auch) den alten Klavierklang?</b> Dann ignoriert das Klavier den Befehl. Local Control einmal am Klavier ausschalten: <b>[DEMO/SONG] und [PIANO/VOICE] gedrückt halten und die Taste B3 drücken</b> (Tastenbezeichnung laut Yamaha-Anleitung; ein „H“ etwa in der Mitte der Tastatur). Danach spielen die Tasten nur noch über die App. Zurück: dieselbe Kombination nochmal.</p>
   </section>
 
   <!-- Mixer -->
@@ -414,7 +416,7 @@
       $("inAct").textContent = "Eingang ✓ empfängt Daten vom Klavier ("+inCount+" Nachrichten)"; }
     if(!echo && !recording) return;
     if(type===0x90 && d2>0){
-      if(echo) noteOn("in"+d1, d1, d2);
+      if(echo){ noteOn("in"+d1, d1, d2); keyCount++; if(keyCount<=1||keyCount%5===0) echoUI(); }
       else if(recording) recEvents.push([performance.now()-recStart,"on",d1,d2]);
     } else if(type===0x80 || (type===0x90 && d2===0)){
       if(echo) noteOff("in"+d1, d1);
@@ -562,7 +564,7 @@
         if(isPhone(i)) audio().resume();
         if(isPhone(i) && !isPhone(S.voice)) cc(CH_MAIN,123,0);
         S.voice=i; setVoice(CH_MAIN,i); save(); voiceButtons();
-        if(!echo && out) showMsg("Klang „"+v.n+"“ gewählt. Damit auch die Tasten am Klavier so klingen: unten „Klavier über App spielen“ einschalten.", true);
+        if(!echo && out && setEcho(true)) showMsg("Klang „"+v.n+"“ – die Tasten am Klavier spielen jetzt über die App.", true);
       };
       (v.gm?g2:g).appendChild(b);
     });
@@ -614,18 +616,20 @@
   });
 
   // ---------- Klavier über App (Local Off + Echo) ----------
+  let keyCount=0;
   function echoUI(){
     $("echoBtn").textContent = echo ? "An – Tasten laufen über die App" : "Aus – Klavier spielt normal";
     $("echoBtn").classList.toggle("on",echo);
+    $("echoState").textContent = !echo ? "" : (keyCount ? "✓ "+keyCount+" Tasten vom Klavier empfangen und im gewählten Klang gespielt." : "Warte auf Tasten vom Klavier … spiel einen Ton.");
   }
-  $("echoBtn").onclick=()=>{
-    if(!out){ showMsg("Erst mit dem Klavier verbinden."); return; }
-    if(!echo && !inp){ showMsg("Kein MIDI-Eingang gewählt – ohne Eingang würde das Klavier stumm bleiben."); return; }
-    echo=!echo;
-    panicNotes();
-    cc(CH_MAIN,122, echo?0:127); // Local Control aus/an
-    echoUI();
-  };
+  function setEcho(on){
+    if(on && !out){ showMsg("Erst mit dem Klavier verbinden."); return false; }
+    if(on && !inp){ showMsg("Kein Eingang vom Klavier gewählt. Unter „Verbindung“ beim Eingang das Klavier (z. B. „CLP-825 …“) auswählen."); return false; }
+    echo=on; panicNotes();
+    for(let ch=0; ch<16; ch++) cc(ch,122, on?0:127); // Local Control aus/an
+    keyCount=0; echoUI(); return true;
+  }
+  $("echoBtn").onclick=()=>setEcho(!echo);
   window.addEventListener("pagehide",()=>{ if(echo && out) cc(CH_MAIN,122,127); });
 
   // ---------- Bildschirm-Tastatur ----------
