@@ -93,6 +93,7 @@
   <!-- Klänge -->
   <section>
     <h2>Klang – im Klavier</h2>
+    <p class="muted" style="margin:-4px 0 10px">Für die echten Tasten bitte „Klavier über App spielen“ einschalten.</p>
     <div class="grid" id="voices"></div>
   </section>
 
@@ -561,6 +562,7 @@
         if(isPhone(i)) audio().resume();
         if(isPhone(i) && !isPhone(S.voice)) cc(CH_MAIN,123,0);
         S.voice=i; setVoice(CH_MAIN,i); save(); voiceButtons();
+        if(!echo && out) showMsg("Klang „"+v.n+"“ gewählt. Damit auch die Tasten am Klavier so klingen: unten „Klavier über App spielen“ einschalten.", true);
       };
       (v.gm?g2:g).appendChild(b);
     });
