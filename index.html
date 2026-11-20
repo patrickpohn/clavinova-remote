@@ -82,8 +82,14 @@
 
   <!-- Klänge -->
   <section>
-    <h2>Klang</h2>
+    <h2>Klang – im Klavier</h2>
     <div class="grid" id="voices"></div>
+  </section>
+
+  <section>
+    <h2>Mehr Klänge – vom Handy</h2>
+    <div class="grid" id="gmVoices"></div>
+    <p class="muted" id="gmInfo" style="margin:8px 0 0">Diese Klänge erzeugt das Handy (das CLP-825 hat selbst nur 10 Klänge). Für Ton aus den Klavier-Lautsprechern das Handy per Bluetooth-Audio mit „CLP-825 AUDIO“ koppeln. Damit die echten Tasten z.&nbsp;B. die Harfe spielen, „Klavier über App spielen“ einschalten. Erstes Laden eines Klangs braucht Internet.</p>
   </section>
 
   <!-- Layer / Split -->
@@ -206,7 +212,93 @@
     {n:"Jazz Organ",    msb:108, lsb:0, pc:17},
     {n:"Strings",       msb:108, lsb:0, pc:49},
   ];
+  // Zusätzliche Klänge, die das Handy selbst spielt (General-MIDI-Samples, FluidR3)
+  const GM = [
+    ["orchestral_harp","Harfe"],["acoustic_guitar_nylon","Konzertgitarre"],["acoustic_guitar_steel","Westerngitarre"],
+    ["electric_guitar_clean","E-Gitarre clean"],["celesta","Celesta"],["music_box","Spieluhr"],["glockenspiel","Glockenspiel"],
+    ["marimba","Marimba"],["xylophone","Xylophon"],["tubular_bells","Röhrenglocken"],["dulcimer","Hackbrett"],["kalimba","Kalimba"],
+    ["koto","Koto"],["sitar","Sitar"],["banjo","Banjo"],["accordion","Akkordeon"],["harmonica","Mundharmonika"],
+    ["church_organ","Kirchenorgel"],["rock_organ","Rockorgel"],["violin","Violine"],["viola","Viola"],["cello","Cello"],
+    ["contrabass","Kontrabass"],["pizzicato_strings","Pizzicato"],["string_ensemble_1","Streichorchester"],["tremolo_strings","Tremolo-Streicher"],
+    ["choir_aahs","Chor „Aah“"],["voice_oohs","Chor „Ooh“"],["trumpet","Trompete"],["trombone","Posaune"],["french_horn","Waldhorn"],
+    ["brass_section","Bläsersatz"],["alto_sax","Altsaxophon"],["tenor_sax","Tenorsaxophon"],["clarinet","Klarinette"],["oboe","Oboe"],
+    ["bassoon","Fagott"],["flute","Querflöte"],["recorder","Blockflöte"],["pan_flute","Panflöte"],["ocarina","Okarina"],
+    ["acoustic_bass","Jazz-Bass"],["electric_bass_finger","E-Bass"],["timpani","Pauken"],["steel_drums","Steel Drums"],
+    ["pad_2_warm","Warmer Pad"],["pad_1_new_age","New-Age-Pad"],["lead_1_square","Synth-Lead"],["electric_piano_2","FM-Piano"],
+    ["clavinet","Clavinet"],["bright_acoustic_piano","Honky Piano"],["vibraphone","Vibraphon (Handy)"],
+  ];
+  GM.forEach(([id,n]) => VOICES.push({n, gm:id}));
+  const isPhone = i => !!VOICES[i].gm;
   const CH_MAIN = 0, CH_LAYER = 1, CH_LEFT = 2; // MIDI-Kanäle 1,2,3
+
+  // ---------- Handy-Klangerzeuger (Web Audio) ----------
+  let actx = null, master = null, revSend = null, revIn = null;
+  function audio(){
+    if(actx) return actx;
+    actx = new (window.AudioContext||window.webkitAudioContext)({latencyHint:"interactive"});
+    master = actx.createGain(); master.connect(actx.destination);
+    // einfacher Hall: künstliche Impulsantwort
+    const len = actx.sampleRate*2.2, ir = actx.createBuffer(2,len,actx.sampleRate);
+    for(let c=0;c<2;c++){ const d=ir.getChannelData(c); for(let i=0;i<len;i++) d[i]=(Math.random()*2-1)*Math.pow(1-i/len,3); }
+    const conv = actx.createConvolver(); conv.buffer = ir;
+    revSend = actx.createGain(); revSend.connect(conv); conv.connect(master);
+    revIn = actx.createGain(); revIn.connect(master); revIn.connect(revSend);
+    applyPhoneMix();
+    return actx;
+  }
+  function applyPhoneMix(){ if(!actx) return; master.gain.value = (S.vol/127)*1.2; revSend.gain.value = S.rev/127*0.9; }
+  const SF_URL = id => `https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/${id}-mp3.js`;
+  const banks = {}; // id -> Promise<Map(midiNote -> AudioBuffer)>
+  const FLAT = {C:0,Db:1,D:2,Eb:3,E:4,F:5,Gb:6,G:7,Ab:8,A:9,Bb:10,B:11};
+  function loadBank(id){
+    if(banks[id]) return banks[id];
+    const ctx = audio();
+    setGmInfo("Lade Klang …");
+    banks[id] = fetch(SF_URL(id)).then(r=>{ if(!r.ok) throw new Error("HTTP "+r.status); return r.text(); }).then(async txt=>{
+      const map = new Map(), jobs = [];
+      const re = /"([A-G]b?)(-?\d)"\s*:\s*"data:audio\/[a-z0-9]+;base64,([^"]+)"/g; let m;
+      while((m = re.exec(txt))){
+        const note = 12*(+m[2]+1) + FLAT[m[1]];
+        const bin = atob(m[3]), buf = new Uint8Array(bin.length);
+        for(let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
+        jobs.push(new Promise(res=>ctx.decodeAudioData(buf.buffer, b=>{map.set(note,b);res();}, ()=>res())));
+      }
+      await Promise.all(jobs);
+      if(!map.size) throw new Error("keine Samples");
+      setGmInfo(null);
+      return map;
+    }).catch(e=>{ delete banks[id]; setGmInfo("Klang konnte nicht geladen werden ("+e.message+"). Internetverbindung prüfen."); throw e; });
+    return banks[id];
+  }
+  let gmInfoDefault = null;
+  function setGmInfo(t){ const el=$("gmInfo"); if(gmInfoDefault===null) gmInfoDefault=el.innerHTML; if(t===null) el.innerHTML=gmInfoDefault; else el.textContent=t; }
+  const SUSTAINY = /harp|guitar|celesta|music_box|glockenspiel|marimba|xylophone|bells|dulcimer|kalimba|koto|sitar|banjo|pizzicato|timpani|steel|bass|piano|vibraphone|clavinet/;
+  const live = new Set();
+  function playSample(vIdx, note, vel, gainF){
+    const id = VOICES[vIdx].gm, ctx = audio(); if(ctx.state!=="running") ctx.resume();
+    const v = {src:null, g:null, dead:false, plucked:SUSTAINY.test(id)};
+    loadBank(id).then(map=>{
+      if(v.dead) return;
+      let best=null, d=1e9; for(const k of map.keys()){ const dd=Math.abs(k-note); if(dd<d){d=dd;best=k;} }
+      const src=ctx.createBufferSource(); src.buffer=map.get(best);
+      src.playbackRate.value=Math.pow(2,(note-best)/12);
+      const g=ctx.createGain(), t=ctx.currentTime, peak=Math.pow(vel/127,1.6)*gainF;
+      g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(peak,t+0.005);
+      src.connect(g).connect(revIn); src.start(t);
+      src.onended=()=>live.delete(v);
+      v.src=src; v.g=g;
+    }).catch(()=>{});
+    live.add(v);
+    return v;
+  }
+  function releaseSample(v, fast){
+    v.dead=true; if(!v.src) return;
+    const t=actx.currentTime, r = fast?0.05:(v.plucked?0.6:0.25);
+    v.g.gain.cancelScheduledValues(t); v.g.gain.setValueAtTime(v.g.gain.value,t);
+    v.g.gain.exponentialRampToValueAtTime(0.0001,t+r); v.src.stop(t+r+0.05);
+  }
+  let sustainDown=false; const sustained=[];
+  function stopAllSamples(){ live.forEach(v=>releaseSample(v,true)); live.clear(); sustained.length=0; sustainDown=false; }
   const NOTE_NAMES = ["C","C#","D","D#","E","F","F#","G","G#","A","A#","B"];
   const noteName = n => NOTE_NAMES[n%12] + (Math.floor(n/12)-1);
 
@@ -230,6 +322,7 @@
   const cc = (ch,c,v) => send([0xB0|ch, c, v]);
   function setVoice(ch, idx){
     const v = VOICES[idx];
+    if(v.gm){ loadBank(v.gm).catch(()=>{}); return; }
     cc(ch, 0, v.msb); cc(ch, 32, v.lsb); send([0xC0|ch, v.pc-1]);
   }
   function rpn(ch, msb, lsb, dMsb, dLsb){
@@ -252,35 +345,45 @@
   }
   function panic(){
     for(let ch=0; ch<16; ch++){ cc(ch,64,0); cc(ch,120,0); cc(ch,123,0); }
+    stopAllSamples();
     held.clear(); document.querySelectorAll(".key.down").forEach(k=>k.classList.remove("down"));
     ["sus","sos","soft"].forEach(id=>$(id).classList.remove("on"));
   }
 
   // ---------- Noten-Routing (Layer/Split/Transpose) ----------
-  const held = new Map(); // key -> [[ch,note],...]
+  const held = new Map(); // key -> [{ch,n}|{s:sample},...]
   function targets(note){
     const t = [];
-    if(S.split && note < S.splitPt) t.push(CH_LEFT);
-    else { t.push(CH_MAIN); if(S.layer) t.push(CH_LAYER); }
+    if(S.split && note < S.splitPt) t.push([CH_LEFT, S.leftVoice, S.leftVol/127]);
+    else { t.push([CH_MAIN, S.voice, 1]); if(S.layer) t.push([CH_LAYER, S.layerVoice, S.layerVol/127]); }
     return t;
   }
   function noteOn(key, note, vel){
     if(held.has(key)) noteOff(key);
     const n = note + S.transpose; if(n<0||n>127) return;
-    const list = targets(note).map(ch => [ch,n]);
-    list.forEach(([ch,nn]) => send([0x90|ch, nn, vel]));
+    const list = targets(note).map(([ch,vIdx,gf]) => {
+      if(isPhone(vIdx)) return {s:playSample(vIdx, n, vel, gf)};
+      send([0x90|ch, n, vel]); return {ch, n};
+    });
     held.set(key, list);
     if(recording) recEvents.push([performance.now()-recStart, "on", note, vel]);
   }
   function noteOff(key, note){
     const list = held.get(key); if(!list) return;
-    list.forEach(([ch,nn]) => send([0x80|ch, nn, 64]));
+    list.forEach(x => {
+      if(x.s){ if(sustainDown) sustained.push(x.s); else releaseSample(x.s); }
+      else send([0x80|x.ch, x.n, 64]);
+    });
     held.delete(key);
     if(recording && note!==undefined) recEvents.push([performance.now()-recStart, "off", note, 0]);
   }
   function pedal(c, v){
     const chans = [CH_MAIN]; if(S.layer) chans.push(CH_LAYER); if(S.split) chans.push(CH_LEFT);
     chans.forEach(ch => cc(ch,c,v));
+    if(c===64){
+      sustainDown = v>=64;
+      if(!sustainDown){ sustained.splice(0).forEach(s=>releaseSample(s)); }
+    }
   }
 
   // ---------- MIDI-Eingang ----------
@@ -300,7 +403,9 @@
   }
 
   // ---------- Verbindung ----------
+  document.addEventListener("pointerdown", ()=>{ if(actx && actx.state!=="running") actx.resume(); }, true);
   async function connect(){
+    audio().resume();
     if(!navigator.requestMIDIAccess){
       showMsg("Dieser Browser kann kein Web MIDI. Bitte Chrome auf Android verwenden (auf dem iPhone eine Web-MIDI-Browser-App).");
       return;
@@ -344,16 +449,22 @@
 
   // ---------- UI: Klänge ----------
   function voiceButtons(){
-    const g=$("voices"); g.innerHTML="";
+    const g=$("voices"), g2=$("gmVoices"); g.innerHTML=""; g2.innerHTML="";
     VOICES.forEach((v,i)=>{
       const b=document.createElement("button"); b.textContent=v.n;
       if(i===S.voice) b.classList.add("sel");
-      b.onclick=()=>{ S.voice=i; setVoice(CH_MAIN,i); save(); voiceButtons(); };
-      g.appendChild(b);
+      b.onclick=()=>{
+        if(isPhone(i)) audio().resume();
+        if(isPhone(i) && !isPhone(S.voice)) cc(CH_MAIN,123,0);
+        S.voice=i; setVoice(CH_MAIN,i); save(); voiceButtons();
+      };
+      (v.gm?g2:g).appendChild(b);
     });
   }
   function fillVoiceSel(sel, cur, onch){
-    sel.innerHTML = VOICES.map((v,i)=>`<option value="${i}">${v.n}</option>`).join("");
+    const opt=(v,i)=>`<option value="${i}">${v.n}</option>`;
+    sel.innerHTML = `<optgroup label="Im Klavier">${VOICES.map((v,i)=>v.gm?"":opt(v,i)).join("")}</optgroup>`+
+                    `<optgroup label="Vom Handy">${VOICES.map((v,i)=>v.gm?opt(v,i):"").join("")}</optgroup>`;
     sel.value=cur; sel.onchange=()=>onch(+sel.value);
   }
   fillVoiceSel($("layerVoice"), S.layerVoice, i=>{S.layerVoice=i; setVoice(CH_LAYER,i); save();});
@@ -373,8 +484,8 @@
     const show=()=>lab.textContent=fmt?fmt(+el.value):el.value; show();
     el.oninput=()=>{ S[key]=+el.value; show(); onInput(+el.value); save(); };
   }
-  slider("vol","vol",null,()=>sendMix());
-  slider("rev","rev",null,v=>[CH_MAIN,CH_LAYER,CH_LEFT].forEach(ch=>cc(ch,91,v)));
+  slider("vol","vol",null,()=>{ sendMix(); applyPhoneMix(); });
+  slider("rev","rev",null,v=>{ [CH_MAIN,CH_LAYER,CH_LEFT].forEach(ch=>cc(ch,91,v)); applyPhoneMix(); });
   slider("cho","cho",null,v=>[CH_MAIN,CH_LAYER,CH_LEFT].forEach(ch=>cc(ch,93,v)));
   slider("bri","bri",null,v=>[CH_MAIN,CH_LAYER,CH_LEFT].forEach(ch=>cc(ch,74,v)));
   slider("pan","pan",v=>v===64?"C":(v<64?"L"+(64-v):"R"+(v-64)),v=>[CH_MAIN,CH_LAYER,CH_LEFT].forEach(ch=>cc(ch,10,v)));
@@ -475,7 +586,7 @@
   };
 
   // ---------- Metronom (Web Audio) ----------
-  let actx=null, metTimer=null, nextT=0, beat=0;
+  let metTimer=null, nextT=0, beat=0;
   function click(t, accent){
     const o=actx.createOscillator(), g=actx.createGain();
     o.frequency.value=accent?1600:1000; g.gain.setValueAtTime(0.0001,t);
@@ -490,7 +601,7 @@
   }
   $("metBtn").onclick=()=>{
     if(metTimer){ clearInterval(metTimer); metTimer=null; $("metBtn").textContent="Start"; $("metBtn").classList.remove("on"); return; }
-    actx = actx || new (window.AudioContext||window.webkitAudioContext)(); actx.resume();
+    audio().resume();
     beat=0; nextT=actx.currentTime+0.05; metTimer=setInterval(sched,25);
     $("metBtn").textContent="Stopp"; $("metBtn").classList.add("on");
   };
