@@ -57,6 +57,8 @@
   details summary{cursor:pointer;color:var(--muted);font-size:13px;margin-top:6px}
   .hide{display:none!important}
   .rec{color:var(--danger)}
+  .slot{border-top:1px solid var(--line);padding-top:10px;margin-top:10px}
+  .slot input[type=text]{font:inherit;color:var(--text);background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:10px;min-height:44px;width:100%;font-size:16px}
 </style>
 </head>
 <body>
@@ -101,6 +103,13 @@
     <h2>Mehr Klänge – vom Handy</h2>
     <div class="grid" id="gmVoices"></div>
     <p class="muted" id="gmInfo" style="margin:8px 0 0">Diese Klänge erzeugt das Handy (das CLP-825 hat selbst nur 10 Klänge). Für Ton aus den Klavier-Lautsprechern das Handy per Bluetooth-Audio mit „CLP-825 AUDIO“ koppeln. Damit die echten Tasten z.&nbsp;B. die Harfe spielen, „Klavier über App spielen“ einschalten. Erstes Laden eines Klangs braucht Internet.</p>
+  </section>
+
+  <section>
+    <h2>Eigene Klänge – selbst aufnehmen</h2>
+    <div class="grid" id="customVoices"></div>
+    <div id="customSlots"></div>
+    <p class="muted" id="customInfo" style="margin:8px 0 0">Nimm mit dem Handy-Mikrofon einen Ton auf (max. 8 s) oder lade eine Audiodatei. „Tonhöhe folgt Taste“: das mittlere C spielt den Ton original, andere Tasten höher/tiefer. „Original“: jede Taste spielt die Aufnahme unverändert ganz ab. Aufnahmen bleiben auf dem Handy gespeichert.</p>
   </section>
 
   <!-- Layer / Split -->
@@ -252,7 +261,11 @@
     ["clavinet","Clavinet"],["bright_acoustic_piano","Honky Piano"],["vibraphone","Vibraphon (Handy)"],
   ];
   GM.forEach(([id,n]) => VOICES.push({n, gm:id}));
-  const isPhone = i => !!VOICES[i].gm;
+  const N_CUSTOM = 3;
+  for(let k=0;k<N_CUSTOM;k++) VOICES.push({n:"Eigener Klang "+(k+1), custom:k});
+  const isPhone = i => !!VOICES[i].gm || VOICES[i].custom!==undefined;
+  const custom = []; // k -> {name, mode:"pitch"|"orig", buf:AudioBuffer|null}
+  for(let k=0;k<N_CUSTOM;k++) custom.push({name:"Eigener Klang "+(k+1), mode:"pitch", buf:null});
   const CH_MAIN = 0, CH_LAYER = 1, CH_LEFT = 2; // MIDI-Kanäle 1,2,3
 
   // ---------- Handy-Klangerzeuger (Web Audio) ----------
@@ -323,7 +336,20 @@
   const SUSTAINY = /harp|guitar|celesta|music_box|glockenspiel|marimba|xylophone|bells|dulcimer|kalimba|koto|sitar|banjo|pizzicato|timpani|steel|bass|piano|vibraphone|clavinet/;
   const live = new Set();
   function playSample(vIdx, note, vel, gainF){
-    const id = VOICES[vIdx].gm, ctx = audio(); if(ctx.state!=="running") ctx.resume();
+    const ctx = audio(); if(ctx.state!=="running") ctx.resume();
+    const cv = VOICES[vIdx];
+    if(cv.custom!==undefined){
+      const c = custom[cv.custom], v={src:null,g:null,dead:false,plucked:true,oneshot:c.mode==="orig"};
+      if(!c.buf){ return v; }
+      const src=ctx.createBufferSource(); src.buffer=c.buf;
+      if(c.mode==="pitch") src.playbackRate.value=Math.pow(2,(note-60)/12);
+      const g=ctx.createGain(), t=ctx.currentTime, peak=Math.pow(vel/127,1.2)*gainF;
+      g.gain.setValueAtTime(0,t); g.gain.linearRampToValueAtTime(peak,t+0.004);
+      src.connect(g).connect(revIn); src.start(t);
+      src.onended=()=>live.delete(v); v.src=src; v.g=g; live.add(v);
+      return v;
+    }
+    const id = cv.gm;
     const v = {src:null, g:null, dead:false, plucked:SUSTAINY.test(id)};
     loadBank(id).then(map=>{
       if(v.dead) return;
@@ -340,6 +366,7 @@
     return v;
   }
   function releaseSample(v, fast){
+    if(v.oneshot && !fast) return; // "Original": ganz ausspielen
     v.dead=true; if(!v.src) return;
     const t=actx.currentTime, r = fast?0.05:(v.plucked?0.6:0.25);
     v.g.gain.cancelScheduledValues(t); v.g.gain.setValueAtTime(v.g.gain.value,t);
@@ -371,6 +398,7 @@
   function setVoice(ch, idx){
     const v = VOICES[idx];
     if(v.gm){ loadBank(v.gm).catch(()=>{}); return; }
+    if(v.custom!==undefined) return;
     cc(ch, 0, v.msb); cc(ch, 32, v.lsb); send([0xC0|ch, v.pc-1]);
   }
   function rpn(ch, msb, lsb, dMsb, dLsb){
@@ -582,22 +610,25 @@
 
   // ---------- UI: Klänge ----------
   function voiceButtons(){
-    const g=$("voices"), g2=$("gmVoices"); g.innerHTML=""; g2.innerHTML="";
+    const g=$("voices"), g2=$("gmVoices"), g3=$("customVoices"); g.innerHTML=""; g2.innerHTML=""; g3.innerHTML="";
     VOICES.forEach((v,i)=>{
-      const b=document.createElement("button"); b.textContent=v.n;
+      const b=document.createElement("button");
+      b.textContent = v.custom!==undefined ? custom[v.custom].name+(custom[v.custom].buf?"":" (leer)") : v.n;
       if(i===S.voice) b.classList.add("sel");
       b.onclick=()=>{
         if(isPhone(i)){ unlockAudio(); audio().resume(); }
         S.voice=i; setVoice(CH_MAIN,i); save(); voiceButtons();
         if(!echo && out && setEcho(true)) showMsg("Klang „"+v.n+"“ – die Tasten am Klavier spielen jetzt über die App.", true);
       };
-      (v.gm?g2:g).appendChild(b);
+      (v.custom!==undefined?g3:v.gm?g2:g).appendChild(b);
     });
   }
   function fillVoiceSel(sel, cur, onch){
-    const opt=(v,i)=>`<option value="${i}">${v.n}</option>`;
-    sel.innerHTML = `<optgroup label="Im Klavier">${VOICES.map((v,i)=>v.gm?"":opt(v,i)).join("")}</optgroup>`+
-                    `<optgroup label="Vom Handy">${VOICES.map((v,i)=>v.gm?opt(v,i):"").join("")}</optgroup>`;
+    const nm=v=>v.custom!==undefined?custom[v.custom].name:v.n;
+    const opt=(v,i)=>`<option value="${i}">${nm(v).replace(/</g,"&lt;")}</option>`;
+    sel.innerHTML = `<optgroup label="Im Klavier">${VOICES.map((v,i)=>isPhone(i)?"":opt(v,i)).join("")}</optgroup>`+
+                    `<optgroup label="Vom Handy">${VOICES.map((v,i)=>v.gm?opt(v,i):"").join("")}</optgroup>`+
+                    `<optgroup label="Eigene Klänge">${VOICES.map((v,i)=>v.custom!==undefined?opt(v,i):"").join("")}</optgroup>`;
     sel.value=cur; sel.onchange=()=>onch(+sel.value);
   }
   fillVoiceSel($("layerVoice"), S.layerVoice, i=>{S.layerVoice=i; setVoice(CH_LAYER,i); save();});
@@ -745,8 +776,82 @@
   $("bpmDown").onclick=()=>{ S.bpm=Math.max(20,S.bpm-(S.bpm>120?4:2)); bpmUI(); save(); };
   $("beats").value=S.beats; $("beats").onchange=()=>{ S.beats=+$("beats").value; save(); };
 
+  // ---------- Eigene Klänge ----------
+  function idb(){ return new Promise((res,rej)=>{ try{ const r=indexedDB.open("clp825",1);
+    r.onupgradeneeded=()=>r.result.createObjectStore("sounds"); r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error); }catch(e){ rej(e); } }); }
+  async function dbPut(k,val){ try{ const db=await idb(); await new Promise((res,rej)=>{ const tx=db.transaction("sounds","readwrite"); tx.objectStore("sounds").put(val,k); tx.oncomplete=res; tx.onerror=()=>rej(tx.error); }); }catch(e){ showMsg("Konnte Klang nicht dauerhaft speichern (nur bis zum Schließen)."); } }
+  async function dbGet(k){ try{ const db=await idb(); return await new Promise(res=>{ const r=db.transaction("sounds").objectStore("sounds").get(k); r.onsuccess=()=>res(r.result); r.onerror=()=>res(null); }); }catch(e){ return null; } }
+  function toBuffer(sr, data){ const ctx=audio(), b=ctx.createBuffer(1,data.length,sr); b.getChannelData(0).set(data); return b; }
+  function prepare(decoded){ // mono, Stille abschneiden, normalisieren
+    const n=decoded.length, mono=new Float32Array(n);
+    for(let c=0;c<decoded.numberOfChannels;c++){ const d=decoded.getChannelData(c); for(let i=0;i<n;i++) mono[i]+=d[i]/decoded.numberOfChannels; }
+    let peak=0; for(let i=0;i<n;i++) peak=Math.max(peak,Math.abs(mono[i]));
+    if(peak<0.002) throw new Error("Aufnahme ist still – Mikrofon erlaubt?");
+    const th=peak*0.06; let a=0,b=n-1; while(a<n&&Math.abs(mono[a])<th) a++; while(b>a&&Math.abs(mono[b])<th*0.5) b--;
+    a=Math.max(0,a-Math.round(decoded.sampleRate*0.005)); b=Math.min(n-1,b+Math.round(decoded.sampleRate*0.05));
+    const out=mono.slice(a,b+1), gain=0.9/peak, fade=Math.min(out.length,Math.round(decoded.sampleRate*0.03));
+    for(let i=0;i<out.length;i++) out[i]*=gain;
+    for(let i=0;i<fade;i++) out[out.length-1-i]*=i/fade;
+    return out;
+  }
+  function decode(arrBuf){ const ctx=audio(); return new Promise((res,rej)=>{ try{ const p=ctx.decodeAudioData(arrBuf,res,()=>rej(new Error("Format nicht lesbar"))); if(p&&p.catch) p.catch(()=>{}); }catch(e){ rej(e); } }); }
+  async function setCustom(k, arrBuf){
+    const data=prepare(await decode(arrBuf)), sr=audio().sampleRate;
+    custom[k].buf=toBuffer(sr,data);
+    await dbPut(k,{name:custom[k].name, mode:custom[k].mode, sr, data});
+    renderCustom(); voiceButtons();
+    $("customInfo").textContent="✓ „"+custom[k].name+"“ gespeichert ("+(data.length/sr).toFixed(1)+" s). Antippen, um ihn zu spielen.";
+  }
+  let recState=null;
+  async function recordCustom(k){
+    if(recState){ if(recState.k===k) recState.stop(); return; }
+    unlockAudio();
+    if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia||!window.MediaRecorder){ showMsg("Dieser Browser kann nicht aufnehmen. Nimm den Ton mit der Sprachmemo-App auf und lade ihn über „Datei“."); return; }
+    let stream; try{ stream=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:false,noiseSuppression:false,autoGainControl:false}}); }
+    catch(e){ showMsg("Kein Zugriff aufs Mikrofon ("+e.message+"). Bitte erlauben oder eine Audiodatei laden."); return; }
+    const mr=new MediaRecorder(stream), chunks=[];
+    mr.ondataavailable=e=>{ if(e.data.size) chunks.push(e.data); };
+    mr.onstop=async()=>{ stream.getTracks().forEach(t=>t.stop()); clearTimeout(recState.timer); recState=null; renderCustom();
+      try{ await setCustom(k, await new Blob(chunks,{type:mr.mimeType}).arrayBuffer()); }catch(e){ showMsg("Aufnahme fehlgeschlagen: "+e.message); } };
+    recState={k, stop:()=>{ if(mr.state!=="inactive") mr.stop(); }, timer:setTimeout(()=>{ if(mr.state!=="inactive") mr.stop(); },8000)};
+    mr.start(); renderCustom();
+    $("customInfo").textContent="🔴 Aufnahme läuft … Ton spielen/singen, dann „Stopp“ (max. 8 s).";
+  }
+  function renderCustom(){
+    const box=$("customSlots"); box.innerHTML="";
+    custom.forEach((c,k)=>{
+      const d=document.createElement("div"); d.className="slot";
+      const rec = recState && recState.k===k;
+      d.innerHTML=`<input type="text" maxlength="24" value="${c.name.replace(/"/g,"&quot;")}" aria-label="Name">
+        <div class="row" style="margin-top:8px">
+          <button class="${rec?"rec":""}" data-a="rec" style="flex:1">${rec?"■ Stopp":"● Aufnehmen"}</button>
+          <button data-a="file" style="flex:1">Datei</button>
+          <button data-a="play" style="flex:1" ${c.buf?"":"disabled"}>▶ Hören</button>
+        </div>
+        <select data-a="mode" style="margin-top:8px"><option value="pitch">Tonhöhe folgt Taste</option><option value="orig">Original (immer gleich, ganz abspielen)</option></select>
+        <input type="file" accept="audio/*" class="hide">`;
+      const nameEl=d.querySelector("input[type=text]"), fileEl=d.querySelector("input[type=file]"), modeEl=d.querySelector("select");
+      modeEl.value=c.mode;
+      const persist=()=>{ if(c.buf) dbPut(k,{name:c.name,mode:c.mode,sr:c.buf.sampleRate,data:c.buf.getChannelData(0)}); };
+      nameEl.onchange=()=>{ c.name=nameEl.value.trim()||("Eigener Klang "+(k+1)); persist(); voiceButtons(); refreshSels(); };
+      modeEl.onchange=()=>{ c.mode=modeEl.value; persist(); };
+      d.querySelector('[data-a=rec]').onclick=()=>recordCustom(k);
+      d.querySelector('[data-a=file]').onclick=()=>fileEl.click();
+      fileEl.onchange=async()=>{ const f=fileEl.files[0]; if(!f) return; unlockAudio(); try{ await setCustom(k, await f.arrayBuffer()); }catch(e){ showMsg("Datei nicht lesbar: "+e.message); } };
+      d.querySelector('[data-a=play]').onclick=()=>{ unlockAudio(); const vi=VOICES.findIndex(v=>v.custom===k); const s1=playSample(vi,60,110,1); if(c.mode==="pitch") setTimeout(()=>releaseSample(s1),1500); };
+      box.appendChild(d);
+    });
+  }
+  function refreshSels(){
+    fillVoiceSel($("layerVoice"), S.layerVoice, i=>{S.layerVoice=i; setVoice(CH_LAYER,i); save();});
+    fillVoiceSel($("leftVoice"),  S.leftVoice,  i=>{S.leftVoice=i;  setVoice(CH_LEFT,i);  save();});
+  }
+  (async()=>{ for(let k=0;k<N_CUSTOM;k++){ const r=await dbGet(k); if(r&&r.data){ custom[k].name=r.name||custom[k].name; custom[k].mode=r.mode||"pitch";
+      try{ custom[k].buf=toBuffer(r.sr, r.data instanceof Float32Array?r.data:new Float32Array(r.data)); }catch(e){} } }
+    renderCustom(); voiceButtons(); refreshSels(); })();
+
   // ---------- Start ----------
-  voiceButtons(); layerSplitUI(); trUI(); echoUI(); buildKb(); bpmUI();
+  renderCustom(); voiceButtons(); layerSplitUI(); trUI(); echoUI(); buildKb(); bpmUI();
   if(!navigator.requestMIDIAccess){
     showMsg("Hinweis: Dieser Browser unterstützt kein Web MIDI. Öffne die Seite in Chrome auf Android (iPhone: Web-MIDI-fähige Browser-App).");
   }
