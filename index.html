@@ -256,6 +256,17 @@
 
   // ---------- Handy-Klangerzeuger (Web Audio) ----------
   let actx = null, master = null, revSend = null, revIn = null;
+  let unlocked=false;
+  function unlockAudio(){
+    if(unlocked) return; unlocked=true;
+    try{ if(navigator.audioSession) navigator.audioSession.type="playback"; }catch(e){}
+    try{ // stilles Audio-Element: schaltet iOS auf "Wiedergabe" (ignoriert den Stumm-Schalter)
+      const a=new Audio("data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAQB8AAIA+AAACABAAZGF0YQAAAAA=");
+      a.loop=true; a.volume=0.01; a.play().catch(()=>{});
+    }catch(e){}
+    const c=audio(); c.resume();
+    const b=c.createBuffer(1,1,22050), src=c.createBufferSource(); src.buffer=b; src.connect(c.destination); src.start(0);
+  }
   function audio(){
     if(actx) return actx;
     actx = new (window.AudioContext||window.webkitAudioContext)({latencyHint:"interactive"});
@@ -270,27 +281,40 @@
     return actx;
   }
   function applyPhoneMix(){ if(!actx) return; master.gain.value = (S.vol/127)*1.2; revSend.gain.value = S.rev/127*0.9; }
-  const SF_URL = id => `https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/${id}-mp3.js`;
+  const SF_URLS = id => [
+    `https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/${id}-mp3.js`,
+    `https://cdn.jsdelivr.net/gh/gleitz/midi-js-soundfonts@gh-pages/FluidR3_GM/${id}-mp3.js`,
+    `https://gleitz.github.io/midi-js-soundfonts/MusyngKite/${id}-mp3.js`,
+  ];
+  async function fetchSf(id){
+    let err;
+    for(const u of SF_URLS(id)){
+      try{ const r=await fetch(u); if(!r.ok) throw new Error("HTTP "+r.status); const t=await r.text(); if(t.includes("base64,")) return t; err=new Error("leere Datei"); }
+      catch(e){ err=e; }
+    }
+    throw err||new Error("nicht erreichbar");
+  }
   const banks = {}; // id -> Promise<Map(midiNote -> AudioBuffer)>
   const FLAT = {C:0,Db:1,D:2,Eb:3,E:4,F:5,Gb:6,G:7,Ab:8,A:9,Bb:10,B:11};
   function loadBank(id){
     if(banks[id]) return banks[id];
     const ctx = audio();
-    setGmInfo("Lade Klang …");
-    banks[id] = fetch(SF_URL(id)).then(r=>{ if(!r.ok) throw new Error("HTTP "+r.status); return r.text(); }).then(async txt=>{
+    const nm=(VOICES.find(v=>v.gm===id)||{}).n||id;
+    setGmInfo("⏳ Lade „"+nm+"“ … (einige Sekunden)");
+    banks[id] = fetchSf(id).then(async txt=>{
       const map = new Map(), jobs = [];
       const re = /"([A-G]b?)(-?\d)"\s*:\s*"data:audio\/[a-z0-9]+;base64,([^"]+)"/g; let m;
       while((m = re.exec(txt))){
         const note = 12*(+m[2]+1) + FLAT[m[1]];
         const bin = atob(m[3]), buf = new Uint8Array(bin.length);
         for(let i=0;i<bin.length;i++) buf[i]=bin.charCodeAt(i);
-        jobs.push(new Promise(res=>ctx.decodeAudioData(buf.buffer, b=>{map.set(note,b);res();}, ()=>res())));
+        jobs.push(new Promise(res=>{ try{ const pr=ctx.decodeAudioData(buf.buffer, b=>{map.set(note,b);res();}, ()=>res()); if(pr&&pr.catch) pr.catch(()=>res()); }catch(e){ res(); } }));
       }
       await Promise.all(jobs);
       if(!map.size) throw new Error("keine Samples");
-      setGmInfo(null);
+      setGmInfo("✓ „"+nm+"“ bereit. Ton kommt aus dem Handy – für die Klavier-Lautsprecher Bluetooth „CLP-825 AUDIO“ verbinden. Handy-Lautstärke aufdrehen!");
       return map;
-    }).catch(e=>{ delete banks[id]; setGmInfo("Klang konnte nicht geladen werden ("+e.message+"). Internetverbindung prüfen."); throw e; });
+    }).catch(e=>{ delete banks[id]; setGmInfo("✗ „"+nm+"“ konnte nicht geladen werden ("+(e.message||e)+"). Internetverbindung prüfen und Klang nochmal antippen."); throw e; });
     return banks[id];
   }
   let gmInfoDefault = null;
@@ -428,7 +452,8 @@
   }
 
   // ---------- Verbindung ----------
-  document.addEventListener("pointerdown", ()=>{ if(actx && actx.state!=="running") actx.resume(); }, true);
+  document.addEventListener("pointerdown", ()=>{ unlockAudio(); if(actx && actx.state!=="running") actx.resume(); }, true);
+  document.addEventListener("touchend", ()=>{ unlockAudio(); if(actx && actx.state!=="running") actx.resume(); }, true);
   async function connect(){
     audio().resume();
     if(!navigator.requestMIDIAccess){
@@ -561,7 +586,8 @@
       const b=document.createElement("button"); b.textContent=v.n;
       if(i===S.voice) b.classList.add("sel");
       b.onclick=()=>{
-        if(isPhone(i)) audio().resume();
+        if(isPhone(i)){ unlockAudio(); audio().resume();
+          loadBank(v.gm).then(()=>{ const s1=playSample(i,60,100,1), s2=playSample(i,67,90,1); setTimeout(()=>{releaseSample(s1);releaseSample(s2);},700); }).catch(()=>{}); }
         if(isPhone(i) && !isPhone(S.voice)) cc(CH_MAIN,123,0);
         S.voice=i; setVoice(CH_MAIN,i); save(); voiceButtons();
         if(!echo && out && setEcho(true)) showMsg("Klang „"+v.n+"“ – die Tasten am Klavier spielen jetzt über die App.", true);
