@@ -263,6 +263,15 @@
   GM.forEach(([id,n]) => VOICES.push({n, gm:id}));
   const N_CUSTOM = 3;
   for(let k=0;k<N_CUSTOM;k++) VOICES.push({n:"Eigener Klang "+(k+1), custom:k});
+  // Später ergänzte Handy-Klänge: hinten anhängen (gespeicherte Auswahl bleibt gültig),
+  // in der Anzeige aber direkt nach dem verwandten Klang einsortieren.
+  // "Soundfont/id" lädt aus einem anderen Soundfont (MusyngKite: hochwertigere, längere Samples).
+  const EXTRA = [
+    {n:"Konzertharfe", gm:"MusyngKite/orchestral_harp", after:"orchestral_harp"},
+  ];
+  EXTRA.forEach(v => VOICES.push(v));
+  const ORDER = VOICES.map((v,i)=>i).filter(i=>!VOICES[i].after);
+  VOICES.forEach((v,i)=>{ if(v.after){ const j=ORDER.findIndex(k=>VOICES[k].gm===v.after); ORDER.splice(j<0?ORDER.length:j+1,0,i); } });
   const isPhone = i => !!VOICES[i].gm || VOICES[i].custom!==undefined;
   const custom = []; // k -> {name, mode:"pitch"|"orig", buf:AudioBuffer|null}
   for(let k=0;k<N_CUSTOM;k++) custom.push({name:"Eigener Klang "+(k+1), mode:"pitch", buf:null});
@@ -295,7 +304,10 @@
     return actx;
   }
   function applyPhoneMix(){ if(!actx) return; master.gain.value = (S.phoneVol/127)*1.2; revSend.gain.value = S.rev/127*0.9; }
-  const SF_URLS = id => [
+  const SF_URLS = id => id.includes("/") ? [
+    `https://gleitz.github.io/midi-js-soundfonts/${id}-mp3.js`,
+    `https://cdn.jsdelivr.net/gh/gleitz/midi-js-soundfonts@gh-pages/${id}-mp3.js`,
+  ] : [
     `https://gleitz.github.io/midi-js-soundfonts/FluidR3_GM/${id}-mp3.js`,
     `https://cdn.jsdelivr.net/gh/gleitz/midi-js-soundfonts@gh-pages/FluidR3_GM/${id}-mp3.js`,
     `https://gleitz.github.io/midi-js-soundfonts/MusyngKite/${id}-mp3.js`,
@@ -611,7 +623,7 @@
   // ---------- UI: Klänge ----------
   function voiceButtons(){
     const g=$("voices"), g2=$("gmVoices"), g3=$("customVoices"); g.innerHTML=""; g2.innerHTML=""; g3.innerHTML="";
-    VOICES.forEach((v,i)=>{
+    ORDER.forEach(i=>{ const v=VOICES[i];
       const b=document.createElement("button");
       b.textContent = v.custom!==undefined ? custom[v.custom].name+(custom[v.custom].buf?"":" (leer)") : v.n;
       if(i===S.voice) b.classList.add("sel");
@@ -626,9 +638,9 @@
   function fillVoiceSel(sel, cur, onch){
     const nm=v=>v.custom!==undefined?custom[v.custom].name:v.n;
     const opt=(v,i)=>`<option value="${i}">${nm(v).replace(/</g,"&lt;")}</option>`;
-    sel.innerHTML = `<optgroup label="Im Klavier">${VOICES.map((v,i)=>isPhone(i)?"":opt(v,i)).join("")}</optgroup>`+
-                    `<optgroup label="Vom Handy">${VOICES.map((v,i)=>v.gm?opt(v,i):"").join("")}</optgroup>`+
-                    `<optgroup label="Eigene Klänge">${VOICES.map((v,i)=>v.custom!==undefined?opt(v,i):"").join("")}</optgroup>`;
+    sel.innerHTML = `<optgroup label="Im Klavier">${ORDER.map(i=>{const v=VOICES[i]; return isPhone(i)?"":opt(v,i);}).join("")}</optgroup>`+
+                    `<optgroup label="Vom Handy">${ORDER.map(i=>{const v=VOICES[i]; return v.gm?opt(v,i):"";}).join("")}</optgroup>`+
+                    `<optgroup label="Eigene Klänge">${ORDER.map(i=>{const v=VOICES[i]; return v.custom!==undefined?opt(v,i):"";}).join("")}</optgroup>`;
     sel.value=cur; sel.onchange=()=>onch(+sel.value);
   }
   fillVoiceSel($("layerVoice"), S.layerVoice, i=>{S.layerVoice=i; setVoice(CH_LAYER,i); save();});
